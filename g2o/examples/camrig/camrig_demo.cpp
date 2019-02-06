@@ -54,10 +54,10 @@ using namespace g2o;
 
 class Sample
 {
-public:
-  static int uniform(int from, int to);
-  static double uniform();
-  static double gaussian(double sigma);
+  public:
+    static int uniform(int from, int to);
+    static double uniform();
+    static double gaussian(double sigma);
 };
 
 static double uniform_rand(double lowerBndr, double upperBndr)
@@ -90,6 +90,8 @@ double Sample::gaussian(double sigma)
 {
   return gauss_rand(0., sigma);
 }
+
+//by settting num_frames to 2 the results of this demo should be similar (up to randomness) to sba_demo
 int main(int argc, const char* argv[])
 {
   if (argc<2)
@@ -135,11 +137,18 @@ int main(int argc, const char* argv[])
     DENSE = atoi(argv[5]) != 0;
   }
 
+  int NUM_FRAMES = 2;
+  if (argc>6)
+  {
+    NUM_FRAMES = atoi(argv[6]);
+  }
+
   cout << "PIXEL_NOISE: " <<  PIXEL_NOISE << endl;
   cout << "OUTLIER_RATIO: " << OUTLIER_RATIO<<  endl;
   cout << "ROBUST_KERNEL: " << ROBUST_KERNEL << endl;
   cout << "STRUCTURE_ONLY: " << STRUCTURE_ONLY<< endl;
   cout << "DENSE: "<<  DENSE << endl;
+  cout << "NUM_FRAMES "<<  NUM_FRAMES << endl;
 
 
 
@@ -154,18 +163,18 @@ int main(int argc, const char* argv[])
   else
   {
 #ifdef G2O_HAVE_CHOLMOD
-	cerr << "Using CHOLMOD" << endl;
+    cerr << "Using CHOLMOD" << endl;
     linearSolver = g2o::make_unique<g2o::LinearSolverCholmod<g2o::BlockSolver_6_3::PoseMatrixType>>();
 #elif defined G2O_HAVE_CSPARSE
     linearSolver = g2o::make_unique<g2o::LinearSolverCSparse<g2o::BlockSolver_6_3::PoseMatrixType>>();
-	cerr << "Using CSPARSE" << endl;
+    cerr << "Using CSPARSE" << endl;
 #else
 #error neither CSparse nor Cholmod are available
 #endif
   }
 
   g2o::OptimizationAlgorithmLevenberg* solver = new g2o::OptimizationAlgorithmLevenberg(
-    g2o::make_unique<g2o::BlockSolver_6_3>(std::move(linearSolver)));
+      g2o::make_unique<g2o::BlockSolver_6_3>(std::move(linearSolver)));
 
   optimizer.setAlgorithm(solver);
 
@@ -174,13 +183,14 @@ int main(int argc, const char* argv[])
   for (size_t i=0;i<500; ++i)
   {
     true_points.push_back(Vector3d((Sample::uniform()-0.5)*3,
-                                   Sample::uniform()-0.5,
-                                   Sample::uniform()+10));
+	  Sample::uniform()-0.5,
+	  Sample::uniform()+3));
   }
 
 
   Vector2d focal_length(500,500); // pixels
   Vector2d principal_point(320,240); // 640x480 image
+  double baseline = 0.075;      // 7.5 cm baseline
 
 
   vector<Eigen::Isometry3d,
@@ -189,12 +199,12 @@ int main(int argc, const char* argv[])
   // set up camera params
   for (int i = 0; i<3;++i){
     g2o::VertexCamRig::setKcam(i, focal_length[0],focal_length[1],
-       	principal_point[0],principal_point[1]); 
+	principal_point[0],principal_point[1]); 
     Eigen:: Quaterniond q;
     q.setIdentity();
     Eigen::Isometry3d pose;
     pose = q;
-    Vector3d trans((i-1)*0.07,0,0);
+    Vector3d trans(i*baseline,0,0);
     pose.translation() = trans;
     g2o::VertexCamRig::setCalibration(i, pose);
   } 
@@ -212,7 +222,7 @@ int main(int argc, const char* argv[])
 
 
     g2o::VertexCamRig * v_se3
-        = new g2o::VertexCamRig();
+      = new g2o::VertexCamRig();
 
     v_se3->setId(vertex_id);
     v_se3->setEstimate(pose);
@@ -220,7 +230,7 @@ int main(int argc, const char* argv[])
 
     if (i<2)
       v_se3->setFixed(true);
-    
+
     optimizer.addVertex(v_se3);
     true_poses.push_back(pose);
     vertex_id++;
@@ -242,8 +252,10 @@ int main(int argc, const char* argv[])
 
     v_p->setId(point_id);
     v_p->setMarginalized(true);
-    v_p->setEstimate(true_points.at(i) + Vector3d(Sample::gaussian(1), 
-	  Sample::gaussian(1), Sample::gaussian(1)));
+    v_p->setEstimate(true_points.at(i)
+	+ Vector3d(Sample::gaussian(1),
+	  Sample::gaussian(1),
+	  Sample::gaussian(1)));
 
     int num_obs = 0;
 
@@ -251,12 +263,16 @@ int main(int argc, const char* argv[])
     {
       Vector2d z;
       auto camrig = dynamic_cast<g2o::VertexCamRig*> (optimizer.vertices().find(j)->second);
-      for (int frame_id=0; frame_id<3 && num_obs<2; frame_id++){
-       	camrig->mapPoint(z,frame_id, true_points.at(i)); 
-	if (0<=z[0] && z[0]<640 && 0<=z[1] && z[1]<640) {
-	  ++num_obs;
-       	}
+      int frame_obs=0;
+      for (int frame_id=0; frame_id<NUM_FRAMES && num_obs<2; frame_id++){ 
+	
+	camrig->mapPoint(z,frame_id, true_points.at(i)); 
+	if (0<=z[0] && z[0]<640 && 0<=z[1] && z[1]<480) {
+	  ++frame_obs;
+	}
       }
+      if (frame_obs==2)
+	++num_obs;
     }
 
     if (num_obs>=2)
@@ -266,12 +282,12 @@ int main(int argc, const char* argv[])
       bool inlier = true;
       for (size_t j=0; j<true_poses.size(); ++j)
       {
-       	Vector2d z;
-       	auto camrig = dynamic_cast<g2o::VertexCamRig*> (optimizer.vertices().find(j)->second);
-       	for (int frame_id=0; frame_id<3 ; frame_id++){
+	Vector2d z;
+	auto camrig = dynamic_cast<g2o::VertexCamRig*> (optimizer.vertices().find(j)->second);
+	for (int frame_id=0; frame_id<NUM_FRAMES ; frame_id++){
 	  camrig->mapPoint(z,frame_id, true_points.at(i)); 
 
-	  if (0<=z[0] && z[0]<640 && 0<=z[1] && z[1]<640) {
+	  if (0<=z[0] && z[0]<640 && 0<=z[1] && z[1]<480) {
 	    double sam = Sample::uniform();
 	    if (sam<OUTLIER_RATIO)
 	    {
@@ -279,7 +295,7 @@ int main(int argc, const char* argv[])
 	      inlier= false;
 	    } 
 	    z += Vector2d(Sample::gaussian(PIXEL_NOISE), 
-	        Sample::gaussian(PIXEL_NOISE)); 
+		Sample::gaussian(PIXEL_NOISE)); 
 	    g2o::Edge_XYZ_VRIG * e = new g2o::Edge_XYZ_VRIG();
 
 	    e->vertices()[0] = dynamic_cast<g2o::OptimizableGraph::Vertex*>(v_p);
@@ -287,9 +303,9 @@ int main(int argc, const char* argv[])
 	      (optimizer.vertices().find(j)->second);
 	    Vector3D mes;
 	    mes.head<2>()=z;
-  	    mes(2)=frame_id;
+	    mes(2)=frame_id;
 	    e->setMeasurement(mes);
-  	    //e->inverseMeasurement() = -z;
+	    //e->inverseMeasurement() = -z;
 	    e->information() = Matrix3d::Identity();
 	    if (ROBUST_KERNEL) {
 	      g2o::RobustKernelHuber* rk = new g2o::RobustKernelHuber;
@@ -297,18 +313,18 @@ int main(int argc, const char* argv[])
 	    } 
 	    optimizer.addEdge(e);
 	  }
-       	}
+	}
       }
 
       if (inlier)
       {
-        inliers.insert(point_id);
-        Vector3D diff = v_p->estimate() - true_points[i];
+	inliers.insert(point_id);
+	Vector3D diff = v_p->estimate() - true_points[i];
 
-        sum_diff2 += diff.dot(diff);
+	sum_diff2 += diff.dot(diff);
       }
-     // else
-     //   cout << "Point: " << point_id <<  "has at least one spurious observation" <<endl;
+      // else
+      //   cout << "Point: " << point_id <<  "has at least one spurious observation" <<endl;
 
       pointid_2_trueid.insert(make_pair(point_id,i));
 
@@ -331,7 +347,7 @@ int main(int argc, const char* argv[])
     for (g2o::OptimizableGraph::VertexIDMap::const_iterator it = optimizer.vertices().begin(); it != optimizer.vertices().end(); ++it) {
       g2o::OptimizableGraph::Vertex* v = static_cast<g2o::OptimizableGraph::Vertex*>(it->second);
       if (v->dimension() == 3)
-        points.push_back(v);
+	points.push_back(v);
     }
 
     structure_only_ba.calc(points, 10);
@@ -349,10 +365,10 @@ int main(int argc, const char* argv[])
   sum_diff2 = 0;
 
   for (unordered_map<int,int>::iterator it=pointid_2_trueid.begin();
-       it!=pointid_2_trueid.end(); ++it)
+      it!=pointid_2_trueid.end(); ++it)
   {
     g2o::HyperGraph::VertexIDMap::iterator v_it
-        = optimizer.vertices().find(it->first);
+      = optimizer.vertices().find(it->first);
 
     if (v_it==optimizer.vertices().end())
     {
@@ -361,7 +377,7 @@ int main(int argc, const char* argv[])
     }
 
     g2o::VertexSBAPointXYZ * v_p
-        = dynamic_cast< g2o::VertexSBAPointXYZ * > (v_it->second);
+      = dynamic_cast< g2o::VertexSBAPointXYZ * > (v_it->second);
 
     if (v_p==0)
     {
@@ -370,16 +386,31 @@ int main(int argc, const char* argv[])
     }
 
     Vector3D diff = v_p->estimate()-true_points[it->second];
-
     if (inliers.find(it->first)==inliers.end())
       continue;
 
     sum_diff2 += diff.dot(diff);
-
     ++point_num;
   }
 
   cout << "Point error after optimisation (inliers only): " << sqrt(sum_diff2/inliers.size()) << endl;
   cout << endl;
 
+  Vector3D sum_diff(0,0,0);
+  sum_diff2=0;
+  for (int i=2; i<5; ++i) //first 2 are fixed. no need
+  {
+    auto rig = dynamic_cast<g2o::VertexCamRig*>(optimizer.vertices().find(i)->second);
+    assert (rig != 0);
+    auto pose = rig->estimate();
+    Vector3D diff = pose.translation() - true_poses[i].translation();
+    sum_diff+=diff.cwiseAbs();
+    sum_diff2 += diff.dot(diff);
+    std::cout << pose.translation().transpose() << std::endl;
+    std::cout << diff.transpose() << std::endl;
+    std::cout << sum_diff.transpose() << std::endl;
+    std::cout << "*******" << std::endl;
+  }
+  cout << "Pose loc error after optimisation : " << sqrt(sum_diff2/3) << endl;
+  cout << "Pose loc error after optimisation : " << sum_diff.transpose()/3<< endl;
 }

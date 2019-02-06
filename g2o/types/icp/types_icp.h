@@ -472,7 +472,8 @@ namespace g2o {
 
 	auto world_T_rig = estimate();
 	auto world_T_frame = (world_T_rig*rig_T_frame[frame_id]);
-        Vector3D pix = Kcam[frame_id]*world_T_frame.inverse().matrix().block<3,4>(0, 0)*pt;
+	auto pix_T_world = Kcam[frame_id]*(world_T_frame.inverse().matrix().block<3,4>(0, 0));
+        Vector3D pix = pix_T_world*pt;
 
         double invp1 = 1.0/pix(2);
         res = pix.head<2>()*invp1;
