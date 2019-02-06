@@ -131,6 +131,32 @@ void declareTypesICP(py::module & m) {
     ;
 
 
+    py::class_<VertexCamRig, VertexSE3>(m, "VertexCamRig")
+        .def(py::init<>())
+
+        .def("oplus_impl", &VertexCamRig::oplusImpl)
+	
+        .def_static("set_cam", &VertexCamRig::setKcam,
+	        "frame_id"_a,
+                "fx"_a, "fy"_a, "cx"_a, "cy"_a,
+                "set up camera matrix for cam frame_id")  
+
+        .def_static("set_calibration", &VertexCamRig::setCalibration,
+	    	"frame_id"_a, "r_t_frame"_a)
+
+        //.def("map_point", &VertexCamRig::mapPoint,
+        //        "res"_a, "pt3"_a,
+        //        "calculate stereo projection")   // (Vector3D&, const Vector3D&) -> 
+        .def("map_point", [](VertexCamRig& cam, const int frame_id, const Vector3D& point) {
+                Vector2D res;
+                cam.mapPoint(res, frame_id, point);
+                return res;
+            })
+
+
+        // camera matrix and stereo baseline
+        //.def_readwrite_static("Kcam", &VertexCamRig::Kcam)
+    ;
 
 
     templatedBaseBinaryEdge<3, Vector3D, VertexSBAPointXYZ, VertexSCam>(m, "_3_Vector3D_VertexSBAPointXYZ_VertexSCam");
@@ -144,6 +170,14 @@ void declareTypesICP(py::module & m) {
 
     ;
 
+    templatedBaseBinaryEdge<3, Vector3D, VertexSBAPointXYZ, VertexCamRig>(m, "_3_Vector3D_VertexSBAPointXYZ_VertexCamRig");
+    py::class_<Edge_XYZ_VRIG, BaseBinaryEdge<3, Vector3D, VertexSBAPointXYZ, VertexCamRig>>(m, "Edge_XYZ_VRIG")
+        .def(py::init<>())
+        .def("compute_error", &Edge_XYZ_VRIG::computeError)
+        
+        //not yet defined
+	//.def("linearize_oplus", &edge_XYZ_VRIG::linearizeOplus)
+    ;
 }
 
 }

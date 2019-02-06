@@ -1,4 +1,5 @@
-# https://github.com/RainerKuemmerle/g2o/blob/master/g2o/examples/sba/sba_demo.cpp
+# results here should match sba_demo.py
+# using camrig with 2 recitified sensors should match results from scam
 
 import numpy as np
 import g2o 
@@ -14,6 +15,7 @@ parser.add_argument('--outlier', dest='outlier_ratio', type=float, default=0.,
 parser.add_argument('--robust', dest='robust_kernel', action='store_true', help='use robust kernel')
 parser.add_argument('--dense', action='store_true', help='use dense solver')
 parser.add_argument('--seed', type=int, help='random seed', default=0)
+parser.add_argument('--n-sensors', type=int, help='number of sensors (currenlty at most 3)', default=2)
 args = parser.parse_args()
 
 
@@ -34,7 +36,10 @@ def main():
     focal_length = (500, 500)
     principal_point = (320, 240)
     baseline = 0.075
-    g2o.VertexSCam.set_cam(*focal_length, *principal_point, baseline)
+    for frame_id in range(args.n_sensors):
+        g2o.VertexCamRig.set_cam(frame_id, *focal_length, *principal_point)
+        sensor_pose = g2o.Isometry3d(np.identity(3), [frame_id*baseline, 0, 0])
+        g2o.VertexCamRig.set_calibration(frame_id, sensor_pose)
 
     true_poses = []
     num_pose = 5
@@ -43,12 +48,11 @@ def main():
         pose = g2o.Isometry3d(np.identity(3), [i*0.04-1, 0, 0])
         true_poses.append(pose)
 
-        v_se3 = g2o.VertexSCam()
+        v_se3 = g2o.VertexCamRig()
         v_se3.set_id(i)
         v_se3.set_estimate(pose)
         if i < 2:
             v_se3.set_fixed(True)
-        v_se3.set_all()
         optimizer.add_vertex(v_se3)
 
 
@@ -59,9 +63,14 @@ def main():
     for i, point in enumerate(true_points):
         visible = []
         for j in range(num_pose):
-            z = optimizer.vertex(j).map_point(point)
-            if 0 <= z[0] < 640 and 0 <= z[1] < 480:
-                visible.append((j, z))
+            sens_vis = 0
+            projections = []
+            for frame_id in range(args.n_sensors):
+                z = optimizer.vertex(j).map_point(frame_id, point)
+                if 0 <= z[0] < 640 and 0 <= z[1] < 480:
+                    projections.append((frame_id, z))
+            if len(projections)>1:
+                visible.append((j, projections))
 
         if len(visible) < 2:
             continue
@@ -73,34 +82,35 @@ def main():
         optimizer.add_vertex(vp)
 
         inlier = True
-        for j, z in visible:
-            if np.random.random() < args.outlier_ratio:
-                inlier = False
-                z = np.array([
-                    np.random.uniform(64, 640),
-                    np.random.uniform(0, 480),
-                    np.random.uniform(0, 64)])  # disparity
-                z[2] = z[0] - z[2]
-            z += np.random.randn(3) * args.pixel_noise * [1, 1, 1/16.]
-
-            edge = g2o.Edge_XYZ_VSC()
-            edge.set_vertex(0, vp)
-            edge.set_vertex(1, optimizer.vertex(j))
-            edge.set_measurement(z)
-            edge.set_information(np.identity(3))
-            if args.robust_kernel:
-                edge.set_robust_kernel(g2o.RobustKernelHuber())
-
-            edge.set_parameter_id(0, 0)
-            optimizer.add_edge(edge)
-
+        if np.random.random() < args.outlier_ratio:
+            inlier = False
         if inlier:
             inliers[point_id] = i
             error = vp.estimate() - true_points[i]
             sse[0] += np.sum(error**2)
+        for j, projections  in visible:
+            for frame_id, z in projections:
+                if not inliers:
+                    z = np.array([
+                        np.random.uniform(64, 640),
+                        np.random.uniform(0, 480)])
+                z += np.random.randn(2) * args.pixel_noise * [1, 1]
+
+                edge = g2o.Edge_XYZ_VRIG()
+                edge.set_vertex(0, vp)
+                edge.set_vertex(1, optimizer.vertex(j))
+                edge.set_measurement(np.hstack((z,[frame_id])))
+                edge.set_information(np.identity(3))
+                if args.robust_kernel:
+                    edge.set_robust_kernel(g2o.RobustKernelHuber())
+
+                edge.set_parameter_id(0, 0)
+                optimizer.add_edge(edge)
+
         point_id += 1
 
     print ('num points', len(inliers))
+
     print('Performing full BA:')
     optimizer.initialize_optimization()
     optimizer.set_verbose(True)
@@ -115,7 +125,7 @@ def main():
     print('\nRMSE (inliers only):')
     print('before optimization:', np.sqrt(sse[0] / len(inliers)))
     print('after  optimization:', np.sqrt(sse[1] / len(inliers)))
-
+                    
     sse = defaultdict(float)
     for i,gt_pose in enumerate(true_poses):
         vp = optimizer.vertex(i)
@@ -125,7 +135,6 @@ def main():
     print('\nRMSE (inliers only):')
     print('pose error before optimization:', np.sqrt(sse[0] / len(inliers)))
     print('pose error after  optimization:', np.sqrt(sse[1] / len(inliers)))
-                    
 
 
 if __name__ == '__main__':
@@ -133,4 +142,3 @@ if __name__ == '__main__':
         np.random.seed(args.seed)
 
     main()
-                    

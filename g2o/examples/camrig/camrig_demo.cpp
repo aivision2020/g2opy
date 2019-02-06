@@ -398,7 +398,7 @@ int main(int argc, const char* argv[])
 
   Vector3D sum_diff(0,0,0);
   sum_diff2=0;
-  for (int i=2; i<5; ++i) //first 2 are fixed. no need
+  for (int i=0; i<5; ++i)
   {
     auto rig = dynamic_cast<g2o::VertexCamRig*>(optimizer.vertices().find(i)->second);
     assert (rig != 0);
